@@ -1,5 +1,6 @@
 package ru.kata.spring.boot_security.demo.service;
 
+import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
@@ -37,15 +38,15 @@ public class AdminServiceImpl implements AdminService {
     @Override
     @Transactional
     public String getUserRolesString(int userId) {
-        Optional<User> optionalUser = userRepository.findById(userId);
-        if (optionalUser.isPresent()) {
-            User user = optionalUser.get();
-            Hibernate.initialize(user.getRoles());
-            if (user.getRoles() != null && !user.getRoles().isEmpty()) {
-                return user.getRoles().stream()
-                        .map(Role::getName) // Преобразуем каждую роль в её название
-                        .collect(Collectors.joining(", ")); // Объединяем через запятую
-            }
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("Пользователь с ID " + userId + " не найден"));
+
+        Hibernate.initialize(user.getRoles());
+
+        if (user.getRoles() != null && !user.getRoles().isEmpty()) {
+            return user.getRoles().stream()
+                    .map(Role::getName)
+                    .collect(Collectors.joining(", "));
         }
         return "Нет ролей";
     }
@@ -53,9 +54,12 @@ public class AdminServiceImpl implements AdminService {
     @Override
     @Transactional
     public Optional<User> getUserByUsername(String username) {
-        Optional<User> userOptional = userRepository.findByUsername(username);
-        userOptional.ifPresent(user -> Hibernate.initialize(user.getRoles())); // Явная инициализация коллекции roles
-        return userOptional;
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new EntityNotFoundException("Пользователь с именем " + username + " не найден"));
+
+        Hibernate.initialize(user.getRoles());
+
+        return Optional.of(user);
     }
 
     @Override
@@ -94,11 +98,10 @@ public class AdminServiceImpl implements AdminService {
         user.setUsername(user.getUsername());
         user.setAge(user.getAge());
 
-        Set<Role> roles = new HashSet<>();
-        for (Integer roleName : roleNames) {
-            Optional<Role> roleOptional = roleRepository.findById(roleName);
-            roleOptional.ifPresent(roles::add);
-        }
+        Set<Role> roles = roleNames.stream()
+                .map(roleId -> roleRepository.findById(roleId)
+                        .orElseThrow(() -> new RuntimeException("Role not found: " + roleId)))
+                .collect(Collectors.toSet());
 
         user.setRoles(roles);
         user.setPassword(bCryptPasswordEncoder.encode(user.getPassword()));
@@ -109,53 +112,35 @@ public class AdminServiceImpl implements AdminService {
     @Transactional
     public void updateUser(int id, User userDetails, Set<Integer> roleNames) {
         log.debug("Updating user with ID: {}", id);
-        Optional<User> optionalUser = userRepository.findById(id);
-        if (optionalUser.isPresent()) {
-            User user = optionalUser.get();
-            log.debug("User found: {}", user);
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Пользователь не найден"));
 
-            user.setUsername(userDetails.getUsername());
-            user.setAge(userDetails.getAge());
+        log.debug("User found: {}", user);
+        user.setUsername(userDetails.getUsername());
+        user.setAge(userDetails.getAge());
 
-            Set<Role> roles = new HashSet<>();
-            for (Integer roleName : roleNames) {
-                Optional<Role> roleOptional = roleRepository.findById(roleName);
-                if (roleOptional.isPresent()) {
-                    roles.add(roleOptional.get());
-                    log.debug("Added role: {}", roleName);
+        Set<Role> roles = roleNames.stream()
+                .map(roleId -> roleRepository.findById(roleId)
+                        .orElseThrow(() -> new RuntimeException("Role not found: " + roleId)))
+                .collect(Collectors.toSet());
 
-                } else {
-                    log.error("Role not found: {}", roleName);
-                }
-            }
-
-            if (roles.isEmpty()) {
-                Optional<Role> defaultRoleOptional = roleRepository.findById(2);
-                if (defaultRoleOptional.isPresent()) {
-                    roles.add(defaultRoleOptional.get());
-                    log.debug("Added default role: ROLE_USER");
-                } else {
-                    throw new RuntimeException("Default role 'ROLE_USER' not found in the database.");
-                }
-            }
-            user.setRoles(roles);
-            user.setPassword(bCryptPasswordEncoder.encode(userDetails.getPassword()));
-            userRepository.save(user);
-            log.debug("User updated successfully with roles: {}", roles);
-        } else {
-            throw new RuntimeException("Пользователь не найден2");
+        if (roles.isEmpty()) {
+            Role defaultRole = roleRepository.findById(2)
+                    .orElseThrow(() -> new RuntimeException("Default role 'ROLE_USER' not found in the database."));
+            roles.add(defaultRole);
+            log.debug("Added default role: ROLE_USER");
         }
+
+        user.setRoles(roles);
+        user.setPassword(bCryptPasswordEncoder.encode(userDetails.getPassword()));
+        userRepository.save(user);
+        log.debug("User updated successfully with roles: {}", roles);
     }
 
     @Override
     @Transactional
     public void deleteUser(int userId) {
-        Optional<User> optionalUser = userRepository.findById(userId);
-        if (optionalUser.isPresent()) {
-            userRepository.deleteById(userId);
-        } else {
-            throw new RuntimeException("Пользователь не найден");
-        }
+        userRepository.deleteById(userId);
         log.debug("Пользователь с ID={} успешно удален", userId);
     }
 
